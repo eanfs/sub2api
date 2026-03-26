@@ -9,6 +9,7 @@
 #
 # All configuration is done via environment variables.
 # No Setup Wizard needed - the system auto-initializes on first run.
+# NOTE: Uses host network mode - all services share the host network stack.
 # =============================================================================
 
 services:
@@ -19,12 +20,11 @@ services:
     image: weishaw/sub2api:latest
     container_name: sub2api
     restart: unless-stopped
+    network_mode: host
     ulimits:
       nofile:
         soft: 100000
         hard: 100000
-    ports:
-      - "${BIND_HOST:-0.0.0.0}:${SERVER_PORT:-8080}:8080"
     volumes:
       # Data persistence (config.yaml will be auto-generated here)
       - sub2api_data:/app/data
@@ -48,7 +48,7 @@ services:
       # =======================================================================
       # Database Configuration (PostgreSQL)
       # =======================================================================
-      - DATABASE_HOST=postgres
+      - DATABASE_HOST=localhost
       - DATABASE_PORT=5432
       - DATABASE_USER=${POSTGRES_USER:-sub2api}
       - DATABASE_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
@@ -62,7 +62,7 @@ services:
       # =======================================================================
       # Redis Configuration
       # =======================================================================
-      - REDIS_HOST=redis
+      - REDIS_HOST=localhost
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_DB=${REDIS_DB:-0}
@@ -143,8 +143,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    networks:
-      - sub2api-network
     healthcheck:
       test: ["CMD", "wget", "-q", "-T", "5", "-O", "/dev/null", "http://localhost:8080/health"]
       interval: 30s
@@ -159,10 +157,7 @@ services:
     image: caddy:2-alpine
     container_name: sub2api-caddy
     restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
+    network_mode: host
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./certs/xiding.tech:/etc/caddy/certs:ro
@@ -172,8 +167,6 @@ services:
     depends_on:
       sub2api:
         condition: service_healthy
-    networks:
-      - sub2api-network
     healthcheck:
       test: ["CMD", "wget", "-q", "-T", "5", "-O", "/dev/null", "http://localhost:80"]
       interval: 30s
@@ -188,6 +181,7 @@ services:
     image: postgres:18-alpine
     container_name: sub2api-postgres
     restart: unless-stopped
+    network_mode: host
     ulimits:
       nofile:
         soft: 100000
@@ -203,16 +197,12 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       - POSTGRES_DB=${POSTGRES_DB:-sub2api}
       - TZ=${TZ:-Asia/Shanghai}
-    networks:
-      - sub2api-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sub2api} -d ${POSTGRES_DB:-sub2api}"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
-    # 注意：不暴露端口到宿主机，应用通过内部网络连接
-    # 如需调试，可临时添加：ports: ["127.0.0.1:5433:5432"]
 
   # ===========================================================================
   # Redis Cache
@@ -221,6 +211,7 @@ services:
     image: redis:8-alpine
     container_name: sub2api-redis
     restart: unless-stopped
+    network_mode: host
     ulimits:
       nofile:
         soft: 100000
@@ -238,8 +229,6 @@ services:
       - TZ=${TZ:-Asia/Shanghai}
       # REDISCLI_AUTH is used by redis-cli for authentication (safer than -a flag)
       - REDISCLI_AUTH=${REDIS_PASSWORD:-}
-    networks:
-      - sub2api-network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -263,10 +252,3 @@ volumes:
     driver: local
   caddy_logs:
     driver: local
-
-# =============================================================================
-# Networks
-# =============================================================================
-networks:
-  sub2api-network:
-    driver: bridge
