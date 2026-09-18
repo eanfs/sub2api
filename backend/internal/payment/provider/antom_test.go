@@ -122,12 +122,15 @@ func TestAntomInquiryNeverCreditsAuthorizationOrAPISuccessAlone(t *testing.T) {
 	}{
 		{name: "api success payment processing", method: "ALIPAY_CN", status: "PROCESSING", want: payment.ProviderStatusPending},
 		{name: "apm settled", method: "ALIPAY_CN", status: "SUCCESS", want: payment.ProviderStatusPaid},
+		{name: "unclassified method fails closed", method: "GCASH", status: "SUCCESS", want: payment.ProviderStatusPending},
 		{name: "card authorization only", method: "CARD", status: "SUCCESS", want: payment.ProviderStatusPending},
 		{name: "unknown method", status: "SUCCESS", want: payment.ProviderStatusPending},
 		{name: "card capture pending", method: "CARD", status: "SUCCESS", extra: `,"transactions":[{"transactionType":"CAPTURE","transactionStatus":"PROCESSING","transactionResult":{"resultStatus":"U"},"transactionAmount":{"currency":"USD","value":"1234"}}]`, want: payment.ProviderStatusPending},
 		{name: "card partially captured", method: "CARD", status: "SUCCESS", extra: `,"transactions":[{"transactionType":"CAPTURE","transactionStatus":"SUCCESS","transactionResult":{"resultStatus":"S"},"transactionAmount":{"currency":"USD","value":"500"}}]`, want: payment.ProviderStatusPending},
 		{name: "card fully captured", method: "CARD", status: "SUCCESS", extra: `,"transactions":[{"transactionType":"CAPTURE","transactionStatus":"SUCCESS","transactionResult":{"resultStatus":"S"},"transactionAmount":{"currency":"USD","value":"1234"}}]`, want: payment.ProviderStatusPaid},
 		{name: "apple pay authorization", method: "APPLEPAY", status: "SUCCESS", want: payment.ProviderStatusPending},
+		{name: "unclassified method captured fully", method: "GCASH", status: "SUCCESS", extra: `,"transactions":[{"transactionType":"CAPTURE","transactionStatus":"SUCCESS","transactionResult":{"resultStatus":"S"},"transactionAmount":{"currency":"USD","value":"1234"}}]`, want: payment.ProviderStatusPaid},
+		{name: "unclassified method captured partially", method: "GCASH", status: "SUCCESS", extra: `,"transactions":[{"transactionType":"CAPTURE","transactionStatus":"SUCCESS","transactionResult":{"resultStatus":"S"},"transactionAmount":{"currency":"USD","value":"500"}}]`, want: payment.ProviderStatusPending},
 		{name: "failed", method: "ALIPAY_CN", status: "FAIL", want: payment.ProviderStatusFailed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -170,7 +173,11 @@ func TestAntomNotificationAuthenticityAndAuthorizationBoundary(t *testing.T) {
 			require.Error(t, err)
 		})
 	}
-	for _, body := range []string{strings.ReplaceAll(raw, "ALIPAY_CN", "CARD"), strings.ReplaceAll(raw, "PAYMENT_RESULT", "PAYMENT_PENDING")} {
+	for _, body := range []string{
+		strings.ReplaceAll(raw, "ALIPAY_CN", "CARD"),
+		strings.ReplaceAll(raw, "ALIPAY_CN", "GCASH"),
+		strings.ReplaceAll(raw, "PAYMENT_RESULT", "PAYMENT_PENDING"),
+	} {
 		result, err := prov.VerifyNotification(context.Background(), body, antomTestHeaders(t, key, body))
 		require.NoError(t, err)
 		require.Nil(t, result)
@@ -198,6 +205,33 @@ func TestAntomCaptureResolvesMerchantOrderAndRequiresFullAmount(t *testing.T) {
 	partial := strings.ReplaceAll(raw, "1234", "500")
 	_, err = prov.VerifyNotification(context.Background(), partial, antomTestHeaders(t, key, partial))
 	require.Error(t, err)
+}
+
+func TestAntomCreatePaymentResolvesReturnURLFromConfig(t *testing.T) {
+	t.Parallel()
+	prov, key := antomTestProvider(t)
+	prov.config["returnUrl"] = "https://merchant.example/payment/result"
+	var seen map[string]any
+	prov.client.Transport = antomTestTransport(func(r *http.Request) (*http.Response, error) {
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&seen))
+		return antomTestResponse(t, key, r.URL.Path, `{"result":{"resultCode":"SUCCESS","resultStatus":"S"},"normalUrl":"https://checkout.antom.com/session"}`), nil
+	})
+	base := payment.CreatePaymentRequest{OrderID: "sub2_123", BuyerID: "42", Amount: "12.34", Subject: "Balance"}
+	_, err := prov.CreatePayment(context.Background(), base)
+	require.NoError(t, err)
+	require.Equal(t, "https://merchant.example/payment/result", seen["paymentRedirectUrl"])
+
+	// A caller-supplied return URL still wins over the configured fallback.
+	withReturn := base
+	withReturn.ReturnURL = "https://merchant.example/payment/result?order_id=1"
+	_, err = prov.CreatePayment(context.Background(), withReturn)
+	require.NoError(t, err)
+	require.Equal(t, "https://merchant.example/payment/result?order_id=1", seen["paymentRedirectUrl"])
+
+	// Without either source the request is rejected rather than sent with an empty URL.
+	delete(prov.config, "returnUrl")
+	_, err = prov.CreatePayment(context.Background(), base)
+	require.ErrorContains(t, err, "return URL")
 }
 
 func TestAntomRefundUnknownRetainsIdempotencyAndInquiryUsesRefundStatus(t *testing.T) {

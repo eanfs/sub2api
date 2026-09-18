@@ -125,7 +125,9 @@ export const PROVIDER_CALLBACK_PATHS: Record<string, CallbackPaths> = {
   wxpay: { notifyUrl: WEBHOOK_PATHS.wxpay },
   // stripe: 不需要回调 URL 配置，Webhook 单独配置。
   // airwallex: 不需要回调 URL 配置，Webhook 在空中云汇后台配置。
-  antom: { notifyUrl: WEBHOOK_PATHS.antom },
+  // antom: Antom 要求 paymentRedirectUrl 必填，服务端到服务端下单不会自带
+  // return_url，因此这里必须提供 returnUrl 兜底（后端 antom.go 读取 config["returnUrl"]）。
+  antom: { notifyUrl: WEBHOOK_PATHS.antom, returnUrl: RETURN_PATH },
 }
 
 /** Per-provider config fields (excludes notifyUrl/returnUrl which are handled separately). */

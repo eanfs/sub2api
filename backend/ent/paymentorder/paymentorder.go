@@ -66,6 +66,8 @@ const (
 	FieldRefundAt = "refund_at"
 	// FieldForceRefund holds the string denoting the force_refund field in the database.
 	FieldForceRefund = "force_refund"
+	// FieldProviderRefundID holds the string denoting the provider_refund_id field in the database.
+	FieldProviderRefundID = "provider_refund_id"
 	// FieldRefundRequestedAt holds the string denoting the refund_requested_at field in the database.
 	FieldRefundRequestedAt = "refund_requested_at"
 	// FieldRefundRequestReason holds the string denoting the refund_request_reason field in the database.
@@ -134,6 +136,7 @@ var Columns = []string{
 	FieldRefundReason,
 	FieldRefundAt,
 	FieldForceRefund,
+	FieldProviderRefundID,
 	FieldRefundRequestedAt,
 	FieldRefundRequestReason,
 	FieldRefundRequestedBy,
@@ -192,6 +195,8 @@ var (
 	DefaultRefundAmount float64
 	// DefaultForceRefund holds the default value on creation for the "force_refund" field.
 	DefaultForceRefund bool
+	// ProviderRefundIDValidator is a validator for the "provider_refund_id" field. It is called by the builders before save.
+	ProviderRefundIDValidator func(string) error
 	// RefundRequestedByValidator is a validator for the "refund_requested_by" field. It is called by the builders before save.
 	RefundRequestedByValidator func(string) error
 	// ClientIPValidator is a validator for the "client_ip" field. It is called by the builders before save.
@@ -337,6 +342,11 @@ func ByRefundAt(opts ...sql.OrderTermOption) OrderOption {
 // ByForceRefund orders the results by the force_refund field.
 func ByForceRefund(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldForceRefund, opts...).ToFunc()
+}
+
+// ByProviderRefundID orders the results by the provider_refund_id field.
+func ByProviderRefundID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldProviderRefundID, opts...).ToFunc()
 }
 
 // ByRefundRequestedAt orders the results by the refund_requested_at field.

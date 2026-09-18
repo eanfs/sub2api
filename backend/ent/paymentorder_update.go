@@ -506,6 +506,26 @@ func (_u *PaymentOrderUpdate) SetNillableForceRefund(v *bool) *PaymentOrderUpdat
 	return _u
 }
 
+// SetProviderRefundID sets the "provider_refund_id" field.
+func (_u *PaymentOrderUpdate) SetProviderRefundID(v string) *PaymentOrderUpdate {
+	_u.mutation.SetProviderRefundID(v)
+	return _u
+}
+
+// SetNillableProviderRefundID sets the "provider_refund_id" field if the given value is not nil.
+func (_u *PaymentOrderUpdate) SetNillableProviderRefundID(v *string) *PaymentOrderUpdate {
+	if v != nil {
+		_u.SetProviderRefundID(*v)
+	}
+	return _u
+}
+
+// ClearProviderRefundID clears the value of the "provider_refund_id" field.
+func (_u *PaymentOrderUpdate) ClearProviderRefundID() *PaymentOrderUpdate {
+	_u.mutation.ClearProviderRefundID()
+	return _u
+}
+
 // SetRefundRequestedAt sets the "refund_requested_at" field.
 func (_u *PaymentOrderUpdate) SetRefundRequestedAt(v time.Time) *PaymentOrderUpdate {
 	_u.mutation.SetRefundRequestedAt(v)
@@ -818,6 +838,11 @@ func (_u *PaymentOrderUpdate) check() error {
 			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "PaymentOrder.status": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.ProviderRefundID(); ok {
+		if err := paymentorder.ProviderRefundIDValidator(v); err != nil {
+			return &ValidationError{Name: "provider_refund_id", err: fmt.Errorf(`ent: validator failed for field "PaymentOrder.provider_refund_id": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.RefundRequestedBy(); ok {
 		if err := paymentorder.RefundRequestedByValidator(v); err != nil {
 			return &ValidationError{Name: "refund_requested_by", err: fmt.Errorf(`ent: validator failed for field "PaymentOrder.refund_requested_by": %w`, err)}
@@ -982,6 +1007,12 @@ func (_u *PaymentOrderUpdate) sqlSave(ctx context.Context) (_node int, err error
 	}
 	if value, ok := _u.mutation.ForceRefund(); ok {
 		_spec.SetField(paymentorder.FieldForceRefund, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.ProviderRefundID(); ok {
+		_spec.SetField(paymentorder.FieldProviderRefundID, field.TypeString, value)
+	}
+	if _u.mutation.ProviderRefundIDCleared() {
+		_spec.ClearField(paymentorder.FieldProviderRefundID, field.TypeString)
 	}
 	if value, ok := _u.mutation.RefundRequestedAt(); ok {
 		_spec.SetField(paymentorder.FieldRefundRequestedAt, field.TypeTime, value)
@@ -1569,6 +1600,26 @@ func (_u *PaymentOrderUpdateOne) SetNillableForceRefund(v *bool) *PaymentOrderUp
 	return _u
 }
 
+// SetProviderRefundID sets the "provider_refund_id" field.
+func (_u *PaymentOrderUpdateOne) SetProviderRefundID(v string) *PaymentOrderUpdateOne {
+	_u.mutation.SetProviderRefundID(v)
+	return _u
+}
+
+// SetNillableProviderRefundID sets the "provider_refund_id" field if the given value is not nil.
+func (_u *PaymentOrderUpdateOne) SetNillableProviderRefundID(v *string) *PaymentOrderUpdateOne {
+	if v != nil {
+		_u.SetProviderRefundID(*v)
+	}
+	return _u
+}
+
+// ClearProviderRefundID clears the value of the "provider_refund_id" field.
+func (_u *PaymentOrderUpdateOne) ClearProviderRefundID() *PaymentOrderUpdateOne {
+	_u.mutation.ClearProviderRefundID()
+	return _u
+}
+
 // SetRefundRequestedAt sets the "refund_requested_at" field.
 func (_u *PaymentOrderUpdateOne) SetRefundRequestedAt(v time.Time) *PaymentOrderUpdateOne {
 	_u.mutation.SetRefundRequestedAt(v)
@@ -1894,6 +1945,11 @@ func (_u *PaymentOrderUpdateOne) check() error {
 			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "PaymentOrder.status": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.ProviderRefundID(); ok {
+		if err := paymentorder.ProviderRefundIDValidator(v); err != nil {
+			return &ValidationError{Name: "provider_refund_id", err: fmt.Errorf(`ent: validator failed for field "PaymentOrder.provider_refund_id": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.RefundRequestedBy(); ok {
 		if err := paymentorder.RefundRequestedByValidator(v); err != nil {
 			return &ValidationError{Name: "refund_requested_by", err: fmt.Errorf(`ent: validator failed for field "PaymentOrder.refund_requested_by": %w`, err)}
@@ -2075,6 +2131,12 @@ func (_u *PaymentOrderUpdateOne) sqlSave(ctx context.Context) (_node *PaymentOrd
 	}
 	if value, ok := _u.mutation.ForceRefund(); ok {
 		_spec.SetField(paymentorder.FieldForceRefund, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.ProviderRefundID(); ok {
+		_spec.SetField(paymentorder.FieldProviderRefundID, field.TypeString, value)
+	}
+	if _u.mutation.ProviderRefundIDCleared() {
+		_spec.ClearField(paymentorder.FieldProviderRefundID, field.TypeString)
 	}
 	if value, ok := _u.mutation.RefundRequestedAt(); ok {
 		_spec.SetField(paymentorder.FieldRefundRequestedAt, field.TypeTime, value)

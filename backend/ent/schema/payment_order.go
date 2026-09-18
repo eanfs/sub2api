@@ -118,6 +118,12 @@ func (PaymentOrder) Fields() []ent.Field {
 			SchemaType(map[string]string{dialect.Postgres: "timestamptz"}),
 		field.Bool("force_refund").
 			Default(false),
+		// 退款幂等标识：上游网关（当前为 Antom）用于查询不确定退款结果的稳定标识。
+		// 由服务端确定性生成并落库，避免依赖审计日志这种 best-effort 写入。
+		field.String("provider_refund_id").
+			Optional().
+			Nillable().
+			MaxLen(128),
 		field.Time("refund_requested_at").
 			Optional().
 			Nillable().

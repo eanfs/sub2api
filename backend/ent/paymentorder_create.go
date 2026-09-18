@@ -315,6 +315,20 @@ func (_c *PaymentOrderCreate) SetNillableForceRefund(v *bool) *PaymentOrderCreat
 	return _c
 }
 
+// SetProviderRefundID sets the "provider_refund_id" field.
+func (_c *PaymentOrderCreate) SetProviderRefundID(v string) *PaymentOrderCreate {
+	_c.mutation.SetProviderRefundID(v)
+	return _c
+}
+
+// SetNillableProviderRefundID sets the "provider_refund_id" field if the given value is not nil.
+func (_c *PaymentOrderCreate) SetNillableProviderRefundID(v *string) *PaymentOrderCreate {
+	if v != nil {
+		_c.SetProviderRefundID(*v)
+	}
+	return _c
+}
+
 // SetRefundRequestedAt sets the "refund_requested_at" field.
 func (_c *PaymentOrderCreate) SetRefundRequestedAt(v time.Time) *PaymentOrderCreate {
 	_c.mutation.SetRefundRequestedAt(v)
@@ -641,6 +655,11 @@ func (_c *PaymentOrderCreate) check() error {
 	if _, ok := _c.mutation.ForceRefund(); !ok {
 		return &ValidationError{Name: "force_refund", err: errors.New(`ent: missing required field "PaymentOrder.force_refund"`)}
 	}
+	if v, ok := _c.mutation.ProviderRefundID(); ok {
+		if err := paymentorder.ProviderRefundIDValidator(v); err != nil {
+			return &ValidationError{Name: "provider_refund_id", err: fmt.Errorf(`ent: validator failed for field "PaymentOrder.provider_refund_id": %w`, err)}
+		}
+	}
 	if v, ok := _c.mutation.RefundRequestedBy(); ok {
 		if err := paymentorder.RefundRequestedByValidator(v); err != nil {
 			return &ValidationError{Name: "refund_requested_by", err: fmt.Errorf(`ent: validator failed for field "PaymentOrder.refund_requested_by": %w`, err)}
@@ -800,6 +819,10 @@ func (_c *PaymentOrderCreate) createSpec() (*PaymentOrder, *sqlgraph.CreateSpec)
 	if value, ok := _c.mutation.ForceRefund(); ok {
 		_spec.SetField(paymentorder.FieldForceRefund, field.TypeBool, value)
 		_node.ForceRefund = value
+	}
+	if value, ok := _c.mutation.ProviderRefundID(); ok {
+		_spec.SetField(paymentorder.FieldProviderRefundID, field.TypeString, value)
+		_node.ProviderRefundID = &value
 	}
 	if value, ok := _c.mutation.RefundRequestedAt(); ok {
 		_spec.SetField(paymentorder.FieldRefundRequestedAt, field.TypeTime, value)
@@ -1345,6 +1368,24 @@ func (u *PaymentOrderUpsert) SetForceRefund(v bool) *PaymentOrderUpsert {
 // UpdateForceRefund sets the "force_refund" field to the value that was provided on create.
 func (u *PaymentOrderUpsert) UpdateForceRefund() *PaymentOrderUpsert {
 	u.SetExcluded(paymentorder.FieldForceRefund)
+	return u
+}
+
+// SetProviderRefundID sets the "provider_refund_id" field.
+func (u *PaymentOrderUpsert) SetProviderRefundID(v string) *PaymentOrderUpsert {
+	u.Set(paymentorder.FieldProviderRefundID, v)
+	return u
+}
+
+// UpdateProviderRefundID sets the "provider_refund_id" field to the value that was provided on create.
+func (u *PaymentOrderUpsert) UpdateProviderRefundID() *PaymentOrderUpsert {
+	u.SetExcluded(paymentorder.FieldProviderRefundID)
+	return u
+}
+
+// ClearProviderRefundID clears the value of the "provider_refund_id" field.
+func (u *PaymentOrderUpsert) ClearProviderRefundID() *PaymentOrderUpsert {
+	u.SetNull(paymentorder.FieldProviderRefundID)
 	return u
 }
 
@@ -2079,6 +2120,27 @@ func (u *PaymentOrderUpsertOne) SetForceRefund(v bool) *PaymentOrderUpsertOne {
 func (u *PaymentOrderUpsertOne) UpdateForceRefund() *PaymentOrderUpsertOne {
 	return u.Update(func(s *PaymentOrderUpsert) {
 		s.UpdateForceRefund()
+	})
+}
+
+// SetProviderRefundID sets the "provider_refund_id" field.
+func (u *PaymentOrderUpsertOne) SetProviderRefundID(v string) *PaymentOrderUpsertOne {
+	return u.Update(func(s *PaymentOrderUpsert) {
+		s.SetProviderRefundID(v)
+	})
+}
+
+// UpdateProviderRefundID sets the "provider_refund_id" field to the value that was provided on create.
+func (u *PaymentOrderUpsertOne) UpdateProviderRefundID() *PaymentOrderUpsertOne {
+	return u.Update(func(s *PaymentOrderUpsert) {
+		s.UpdateProviderRefundID()
+	})
+}
+
+// ClearProviderRefundID clears the value of the "provider_refund_id" field.
+func (u *PaymentOrderUpsertOne) ClearProviderRefundID() *PaymentOrderUpsertOne {
+	return u.Update(func(s *PaymentOrderUpsert) {
+		s.ClearProviderRefundID()
 	})
 }
 
@@ -3011,6 +3073,27 @@ func (u *PaymentOrderUpsertBulk) SetForceRefund(v bool) *PaymentOrderUpsertBulk 
 func (u *PaymentOrderUpsertBulk) UpdateForceRefund() *PaymentOrderUpsertBulk {
 	return u.Update(func(s *PaymentOrderUpsert) {
 		s.UpdateForceRefund()
+	})
+}
+
+// SetProviderRefundID sets the "provider_refund_id" field.
+func (u *PaymentOrderUpsertBulk) SetProviderRefundID(v string) *PaymentOrderUpsertBulk {
+	return u.Update(func(s *PaymentOrderUpsert) {
+		s.SetProviderRefundID(v)
+	})
+}
+
+// UpdateProviderRefundID sets the "provider_refund_id" field to the value that was provided on create.
+func (u *PaymentOrderUpsertBulk) UpdateProviderRefundID() *PaymentOrderUpsertBulk {
+	return u.Update(func(s *PaymentOrderUpsert) {
+		s.UpdateProviderRefundID()
+	})
+}
+
+// ClearProviderRefundID clears the value of the "provider_refund_id" field.
+func (u *PaymentOrderUpsertBulk) ClearProviderRefundID() *PaymentOrderUpsertBulk {
+	return u.Update(func(s *PaymentOrderUpsert) {
+		s.ClearProviderRefundID()
 	})
 }
 

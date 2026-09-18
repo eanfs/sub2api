@@ -763,9 +763,13 @@ type refundQueryProviderTestDouble struct {
 	refundProviderTestDouble
 	refundResponse      *payment.RefundResponse
 	gatewayRefundAmount string
+	onQuery             func(payment.RefundQueryRequest)
 }
 
 func (p *refundQueryProviderTestDouble) QueryRefund(_ context.Context, req payment.RefundQueryRequest) (*payment.RefundResponse, error) {
+	if p.onQuery != nil {
+		p.onQuery(req)
+	}
 	if p.gatewayRefundAmount != "" && req.Amount != p.gatewayRefundAmount {
 		return nil, fmt.Errorf("gateway refund amount mismatch: expected %s, got %s", p.gatewayRefundAmount, req.Amount)
 	}
@@ -785,4 +789,131 @@ func (p *antomRetryGateway) Refund(_ context.Context, req payment.RefundRequest)
 		return &payment.RefundResponse{Status: payment.ProviderStatusFailed}, errors.New("merchant balance insufficient")
 	}
 	return &payment.RefundResponse{Status: payment.ProviderStatusSuccess}, nil
+}
+
+// A pending refund must be inquiriable from data on the order itself. Previously
+// the identifier lived only in the best-effort REFUND_PENDING audit row, so an
+// order whose audit insert failed could never be resolved.
+func TestMarkRefundPendingPersistsRefundIDOnOrder(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	order := createPendingRefundOrderForTest(t, ctx, client, "pending-refund-id")
+	_, err := client.PaymentOrder.UpdateOneID(order.ID).SetStatus(OrderStatusRefunding).Save(ctx)
+	require.NoError(t, err)
+
+	svc := &PaymentService{entClient: client, loadBalancer: &captureLoadBalancer{}}
+	plan := &RefundPlan{
+		OrderID:       order.ID,
+		Order:         order,
+		RefundAmount:  100,
+		GatewayAmount: 100,
+		Reason:        "pending",
+		DeductionType: payment.DeductionTypeBalance,
+	}
+	result, err := svc.finishRefund(ctx, plan, &payment.RefundResponse{RefundID: "rf_durable", Status: payment.ProviderStatusPending})
+	require.NoError(t, err)
+	require.False(t, result.Success)
+
+	reloaded, err := client.PaymentOrder.Get(ctx, order.ID)
+	require.NoError(t, err)
+	require.Equal(t, OrderStatusRefundPending, reloaded.Status)
+	require.NotNil(t, reloaded.ProviderRefundID)
+	require.Equal(t, "rf_durable", *reloaded.ProviderRefundID)
+}
+
+// An order created before provider_refund_id existed still resolves through the
+// legacy audit row, so the migration does not strand in-flight refunds.
+func TestQueryAndFinalizeRefundFallsBackToAuditRefundID(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	order := createPendingRefundOrderForTest(t, ctx, client, "pending-refund-legacy")
+	// createPendingRefundOrderForTest writes a REFUND_PENDING audit row carrying the id.
+	reloaded, err := client.PaymentOrder.Get(ctx, order.ID)
+	require.NoError(t, err)
+	require.Nil(t, reloaded.ProviderRefundID)
+
+	var seenID string
+	svc := &PaymentService{
+		entClient:    client,
+		loadBalancer: &captureLoadBalancer{},
+		userRepo: &mockUserRepo{deductAvailableBalanceFn: func(_ context.Context, _ int64, amount float64) (float64, error) {
+			return amount, nil
+		}},
+	}
+	restore := replacePaymentProviderFactoryForTest(t, &refundQueryProviderTestDouble{
+		refundResponse: &payment.RefundResponse{RefundID: "rf_legacy", Status: payment.ProviderStatusPending},
+		onQuery:        func(req payment.RefundQueryRequest) { seenID = req.RefundID },
+	})
+	defer restore()
+
+	result, err := svc.QueryAndFinalizeRefund(ctx, order.ID)
+	require.NoError(t, err)
+	require.False(t, result.Success)
+	require.Equal(t, "rf_test", seenID, "query must receive the identifier from the legacy audit row")
+}
+
+func TestForceFinalizeRefundRefundedDeductsAndMarksRefunded(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	order := createPendingRefundOrderForTest(t, ctx, client, "force-finalize-refunded")
+
+	var deducted float64
+	svc := &PaymentService{
+		entClient:    client,
+		loadBalancer: &captureLoadBalancer{},
+		userRepo: &mockUserRepo{deductAvailableBalanceFn: func(_ context.Context, _ int64, amount float64) (float64, error) {
+			deducted += amount
+			return amount, nil
+		}},
+	}
+	result, err := svc.ForceFinalizeRefund(ctx, order.ID, true, "confirmed refunded in gateway dashboard")
+	require.NoError(t, err)
+	require.True(t, result.Success)
+	require.Equal(t, 100.0, deducted)
+
+	reloaded, err := client.PaymentOrder.Get(ctx, order.ID)
+	require.NoError(t, err)
+	require.Equal(t, OrderStatusRefunded, reloaded.Status)
+	require.NotNil(t, reloaded.RefundAt)
+
+	audits, err := client.PaymentAuditLog.Query().
+		Where(paymentauditlog.OrderIDEQ(strconv.FormatInt(order.ID, 10)), paymentauditlog.ActionEQ("REFUND_FORCE_FINALIZED_REFUNDED")).
+		Count(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, audits)
+}
+
+func TestForceFinalizeRefundNotRefundedUnblocksRetry(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	order := createPendingRefundOrderForTest(t, ctx, client, "force-finalize-failed")
+	_, err := client.PaymentOrder.UpdateOneID(order.ID).SetPaymentType(payment.TypeAntom).Save(ctx)
+	require.NoError(t, err)
+
+	svc := &PaymentService{entClient: client, loadBalancer: &captureLoadBalancer{}}
+	result, err := svc.ForceFinalizeRefund(ctx, order.ID, false, "gateway shows no refund")
+	require.NoError(t, err)
+	require.False(t, result.Success)
+
+	reloaded, err := client.PaymentOrder.Get(ctx, order.ID)
+	require.NoError(t, err)
+	require.Equal(t, OrderStatusRefundFailed, reloaded.Status)
+
+	audits, err := client.PaymentAuditLog.Query().
+		Where(paymentauditlog.OrderIDEQ(strconv.FormatInt(order.ID, 10)), paymentauditlog.ActionEQ("REFUND_FORCE_FINALIZED_FAILED")).
+		Count(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, audits)
+}
+
+func TestForceFinalizeRefundRejectsNonPendingOrder(t *testing.T) {
+	ctx := context.Background()
+	client := newPaymentConfigServiceTestClient(t)
+	order := createPendingRefundOrderForTest(t, ctx, client, "force-finalize-wrong-status")
+	_, err := client.PaymentOrder.UpdateOneID(order.ID).SetStatus(OrderStatusCompleted).Save(ctx)
+	require.NoError(t, err)
+
+	svc := &PaymentService{entClient: client, loadBalancer: &captureLoadBalancer{}}
+	_, err = svc.ForceFinalizeRefund(ctx, order.ID, true, "should not apply")
+	require.Error(t, err)
 }

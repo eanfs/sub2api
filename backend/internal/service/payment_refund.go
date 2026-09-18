@@ -463,11 +463,17 @@ func (s *PaymentService) QueryAndFinalizeRefund(ctx context.Context, oid int64) 
 
 	plan := s.refundFinalizePlan(o)
 	pendingDetail := s.latestRefundPendingDetail(ctx, oid)
+	// The order column is authoritative; orders created before it existed fall
+	// back to the REFUND_PENDING audit row.
+	refundID := strings.TrimSpace(psStringValue(o.ProviderRefundID))
+	if refundID == "" {
+		refundID = pendingDetail.RefundID
+	}
 	finishProviderCall := servertiming.ObserveDependency(ctx, "payment")
 	resp, err := queryProvider.QueryRefund(ctx, payment.RefundQueryRequest{
 		TradeNo:  o.PaymentTradeNo,
 		OrderID:  o.OutTradeNo,
-		RefundID: pendingDetail.RefundID,
+		RefundID: refundID,
 		Amount:   formatGatewayRefundAmount(plan.GatewayAmount, o),
 	})
 	finishProviderCall()
@@ -495,6 +501,55 @@ func (s *PaymentService) QueryAndFinalizeRefund(ctx context.Context, oid int64) 
 	default:
 		return s.finalizeRefundFailed(ctx, o, fmt.Errorf("payment refund returned unknown status: %s", strings.TrimSpace(resp.Status)))
 	}
+}
+
+// ForceFinalizeRefund moves a REFUND_PENDING order to a terminal state without
+// consulting the gateway. It exists for orders that inquiry can never resolve —
+// a mismatched gateway refund amount, or a missing refund identifier on an order
+// created before provider_refund_id was persisted. Such an order would otherwise
+// be stuck forever, because Antom orders in REFUND_PENDING are never resubmitted.
+//
+// The operator states what the gateway actually did:
+//   - refunded: the money left the gateway; deduct the user and mark REFUNDED.
+//   - failed: the refund never happened; mark REFUND_FAILED so it can be retried.
+//
+// Reached only through the admin API; every call is audited.
+func (s *PaymentService) ForceFinalizeRefund(ctx context.Context, oid int64, refunded bool, reason string) (*RefundResult, error) {
+	o, err := s.entClient.PaymentOrder.Get(ctx, oid)
+	if err != nil {
+		return nil, infraerrors.NotFound("NOT_FOUND", "order not found")
+	}
+	if o.Status != OrderStatusRefundPending {
+		return nil, infraerrors.BadRequest("INVALID_STATUS", "only refund pending orders can be force finalized")
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "admin force finalize"
+	}
+	detail := map[string]any{
+		"refunded":         refunded,
+		"reason":           reason,
+		"providerRefundID": strings.TrimSpace(psStringValue(o.ProviderRefundID)),
+	}
+
+	if !refunded {
+		s.writeAuditLog(ctx, oid, "REFUND_FORCE_FINALIZED_FAILED", "admin", detail)
+		return s.finalizeRefundFailed(ctx, o, fmt.Errorf("force finalized by admin: %s", reason))
+	}
+
+	plan := s.refundFinalizePlan(o)
+	plan.Reason = reason
+	if o.OrderType == payment.OrderTypeSubscription {
+		if early := s.prepDeduct(ctx, o, plan, true); early != nil {
+			return early, nil
+		}
+	}
+	result, err := s.finalizePendingRefundSuccess(ctx, plan)
+	if err != nil {
+		return nil, err
+	}
+	s.writeAuditLog(ctx, oid, "REFUND_FORCE_FINALIZED_REFUNDED", "admin", detail)
+	return result, nil
 }
 
 func (s *PaymentService) finalizePendingRefundSuccess(ctx context.Context, p *RefundPlan) (_ *RefundResult, err error) {
@@ -678,16 +733,22 @@ func (s *PaymentService) markRefundPending(ctx context.Context, p *RefundPlan, r
 		p.SubDaysToDeduct = 0
 	}
 
-	_, err := s.entClient.PaymentOrder.UpdateOneID(p.OrderID).
+	refundID := refundResponseID(resp)
+	update := s.entClient.PaymentOrder.UpdateOneID(p.OrderID).
 		SetStatus(OrderStatusRefundPending).
 		SetRefundAmount(p.RefundAmount).
 		SetRefundReason(p.Reason).
 		ClearRefundAt().
 		SetForceRefund(p.Force).
 		ClearFailedAt().
-		ClearFailedReason().
-		Save(ctx)
-	if err != nil {
+		ClearFailedReason()
+	// Persist the upstream identifier on the order itself. The audit log below is
+	// best-effort, so an order whose identifier only lived there could become
+	// un-inquirable and therefore permanently stuck in REFUND_PENDING.
+	if refundID != "" {
+		update = update.SetProviderRefundID(refundID)
+	}
+	if _, err := update.Save(ctx); err != nil {
 		return nil, fmt.Errorf("mark refund pending: %w", err)
 	}
 

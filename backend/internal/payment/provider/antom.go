@@ -147,11 +147,15 @@ func (a *Antom) CreatePayment(ctx context.Context, req payment.CreatePaymentRequ
 	if notifyURL == "" {
 		notifyURL = a.config["notifyUrl"]
 	}
-	for _, raw := range []string{notifyURL, req.ReturnURL} {
-		parsed, err := url.Parse(raw)
-		if err != nil || parsed.Host == "" || parsed.User != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-			return nil, fmt.Errorf("antom requires absolute HTTP(S) notify and return URLs")
-		}
+	returnURL := req.ReturnURL
+	if returnURL == "" {
+		returnURL = a.config["returnUrl"]
+	}
+	if !antomAbsoluteHTTPURL(notifyURL) {
+		return nil, fmt.Errorf("antom requires an absolute HTTP(S) notify URL")
+	}
+	if !antomAbsoluteHTTPURL(returnURL) {
+		return nil, fmt.Errorf("antom requires an absolute HTTP(S) return URL; pass return_url or configure returnUrl")
 	}
 	env := map[string]string{"terminalType": "WEB", "clientIp": req.ClientIP}
 	if req.IsMobile {
@@ -170,7 +174,7 @@ func (a *Antom) CreatePayment(ctx context.Context, req payment.CreatePaymentRequ
 	}
 	payload := map[string]any{
 		"productCode": "CASHIER_PAYMENT", "productScene": "CHECKOUT_PAYMENT", "paymentRequestId": req.OrderID,
-		"paymentAmount": amount, "paymentNotifyUrl": notifyURL, "paymentRedirectUrl": req.ReturnURL,
+		"paymentAmount": amount, "paymentNotifyUrl": notifyURL, "paymentRedirectUrl": returnURL,
 		"paymentFactor": map[string]string{"captureMode": "AUTOMATIC"},
 		"order":         map[string]any{"referenceOrderId": req.OrderID, "orderDescription": req.Subject, "orderAmount": amount, "buyer": map[string]string{"referenceBuyerId": req.BuyerID}},
 		"env":           env,
@@ -190,6 +194,11 @@ func (a *Antom) CreatePayment(ctx context.Context, req payment.CreatePaymentRequ
 		return nil, fmt.Errorf("antom returned no valid HTTPS checkout URL")
 	}
 	return &payment.CreatePaymentResponse{TradeNo: req.OrderID, PayURL: resp.NormalURL, Currency: a.config["currency"]}, nil
+}
+
+func antomAbsoluteHTTPURL(raw string) bool {
+	parsed, err := url.Parse(raw)
+	return err == nil && parsed.Host != "" && parsed.User == nil && (parsed.Scheme == "http" || parsed.Scheme == "https")
 }
 
 func (a *Antom) inquire(ctx context.Context, key, id string) (*antomResponse, error) {
@@ -226,9 +235,11 @@ func (a *Antom) QueryOrder(ctx context.Context, tradeNo string) (*payment.QueryO
 	case "FAIL", "CANCELLED":
 		status = payment.ProviderStatusFailed
 	case "SUCCESS":
-		// Missing method information is not evidence of an APM payment. Fail closed
-		// until capture proof arrives rather than crediting a card authorization.
-		if resp.PaymentMethodType != "" && !antomNeedsCapture(resp.PaymentMethodType) {
+		// Crediting requires positive proof of settlement: either a method that
+		// settles in one step, or a successful CAPTURE transaction covering the
+		// full amount. A card authorization alone, a partial capture, or a
+		// method we cannot classify all stay pending.
+		if antomSettlesWithoutCapture(resp.PaymentMethodType) {
 			status = payment.ProviderStatusPaid
 		} else {
 			captured := decimal.Zero
@@ -250,9 +261,18 @@ func (a *Antom) QueryOrder(ctx context.Context, tradeNo string) (*payment.QueryO
 	return &payment.QueryOrderResponse{TradeNo: resp.PaymentRequestID, Status: status, Amount: amount, PaidAt: resp.PaymentTime, Metadata: a.MerchantIdentityMetadata()}, nil
 }
 
-func antomNeedsCapture(method string) bool {
+// antomSettlesWithoutCapture reports whether a payment method settles in one
+// step, so that PAYMENT_RESULT success alone is final.
+//
+// This is deliberately an allowlist of methods whose settlement we can prove,
+// not a denylist of capture-requiring ones. Card, Apple Pay and Google Pay are
+// two-phase (authorization then capture); every other method Antom offers —
+// including ones a merchant may newly enable — must show a full-amount CAPTURE
+// transaction before an order is credited. An unrecognised method therefore
+// fails closed, matching the empty-method branch in VerifyNotification.
+func antomSettlesWithoutCapture(method string) bool {
 	switch method {
-	case "CARD", "APPLEPAY", "GOOGLEPAY":
+	case "ALIPAY_CN":
 		return true
 	}
 	return false
@@ -293,27 +313,12 @@ func (a *Antom) VerifyNotification(ctx context.Context, rawBody string, headers 
 		if event.PaymentRequestID == "" || event.PaymentID == "" {
 			return nil, fmt.Errorf("antom notification missing payment identifiers")
 		}
-		if antomNeedsCapture(event.PaymentMethodType) {
+		if !antomSettlesWithoutCapture(event.PaymentMethodType) {
+			// Either a capture-requiring method (CARD/APPLEPAY/GOOGLEPAY) or one we
+			// cannot classify: the CAPTURE_RESULT notification is the crediting path.
 			return nil, nil
 		}
-		if event.PaymentMethodType == "" {
-			// Missing method type cannot prove capture. Query for authoritative
-			// payment details rather than inferring settlement from API success.
-			queried, err := a.QueryOrder(ctx, event.PaymentRequestID)
-			if err != nil {
-				return nil, err
-			}
-			if queried.Status != payment.ProviderStatusPaid {
-				return nil, nil
-			}
-			amount = queried.Amount
-			notifiedAmount, err := a.readAmount(event.PaymentAmount)
-			if err != nil || notifiedAmount != amount {
-				return nil, fmt.Errorf("antom notification amount mismatch")
-			}
-		} else {
-			amount, err = a.readAmount(event.PaymentAmount)
-		}
+		amount, err = a.readAmount(event.PaymentAmount)
 	case "CAPTURE_RESULT":
 		amount, err = a.readAmount(event.CaptureAmount)
 		if err != nil {
