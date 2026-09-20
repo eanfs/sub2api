@@ -180,6 +180,11 @@ func ForceRefund(v bool) predicate.PaymentOrder {
 	return predicate.PaymentOrder(sql.FieldEQ(FieldForceRefund, v))
 }
 
+// ProviderRefundID applies equality check predicate on the "provider_refund_id" field. It's identical to ProviderRefundIDEQ.
+func ProviderRefundID(v string) predicate.PaymentOrder {
+	return predicate.PaymentOrder(sql.FieldEQ(FieldProviderRefundID, v))
+}
+
 // RefundRequestedAt applies equality check predicate on the "refund_requested_at" field. It's identical to RefundRequestedAtEQ.
 func RefundRequestedAt(v time.Time) predicate.PaymentOrder {
 	return predicate.PaymentOrder(sql.FieldEQ(FieldRefundRequestedAt, v))
@@ -1688,6 +1693,81 @@ func ForceRefundEQ(v bool) predicate.PaymentOrder {
 // ForceRefundNEQ applies the NEQ predicate on the "force_refund" field.
 func ForceRefundNEQ(v bool) predicate.PaymentOrder {
 	return predicate.PaymentOrder(sql.FieldNEQ(FieldForceRefund, v))
+}
+
+// ProviderRefundIDEQ applies the EQ predicate on the "provider_refund_id" field.
+func ProviderRefundIDEQ(v string) predicate.PaymentOrder {
+	return predicate.PaymentOrder(sql.FieldEQ(FieldProviderRefundID, v))
+}
+
+// ProviderRefundIDNEQ applies the NEQ predicate on the "provider_refund_id" field.
+func ProviderRefundIDNEQ(v string) predicate.PaymentOrder {
+	return predicate.PaymentOrder(sql.FieldNEQ(FieldProviderRefundID, v))
+}
+
+// ProviderRefundIDIn applies the In predicate on the "provider_refund_id" field.
+func ProviderRefundIDIn(vs ...string) predicate.PaymentOrder {
+	return predicate.PaymentOrder(sql.FieldIn(FieldProviderRefundID, vs...))
+}
+
+// ProviderRefundIDNotIn applies the NotIn predicate on the "provider_refund_id" field.
+func ProviderRefundIDNotIn(vs ...string) predicate.PaymentOrder {
+	return predicate.PaymentOrder(sql.FieldNotIn(FieldProviderRefundID, vs...))
+}
+
+// ProviderRefundIDGT applies the GT predicate on the "provider_refund_id" field.
+func ProviderRefundIDGT(v string) predicate.PaymentOrder {
+	return predicate.PaymentOrder(sql.FieldGT(FieldProviderRefundID, v))
+}
+
+// ProviderRefundIDGTE applies the GTE predicate on the "provider_refund_id" field.
+func ProviderRefundIDGTE(v string) predicate.PaymentOrder {
+	return predicate.PaymentOrder(sql.FieldGTE(FieldProviderRefundID, v))
+}
+
+// ProviderRefundIDLT applies the LT predicate on the "provider_refund_id" field.
+func ProviderRefundIDLT(v string) predicate.PaymentOrder {
+	return predicate.PaymentOrder(sql.FieldLT(FieldProviderRefundID, v))
+}
+
+// ProviderRefundIDLTE applies the LTE predicate on the "provider_refund_id" field.
+func ProviderRefundIDLTE(v string) predicate.PaymentOrder {
+	return predicate.PaymentOrder(sql.FieldLTE(FieldProviderRefundID, v))
+}
+
+// ProviderRefundIDContains applies the Contains predicate on the "provider_refund_id" field.
+func ProviderRefundIDContains(v string) predicate.PaymentOrder {
+	return predicate.PaymentOrder(sql.FieldContains(FieldProviderRefundID, v))
+}
+
+// ProviderRefundIDHasPrefix applies the HasPrefix predicate on the "provider_refund_id" field.
+func ProviderRefundIDHasPrefix(v string) predicate.PaymentOrder {
+	return predicate.PaymentOrder(sql.FieldHasPrefix(FieldProviderRefundID, v))
+}
+
+// ProviderRefundIDHasSuffix applies the HasSuffix predicate on the "provider_refund_id" field.
+func ProviderRefundIDHasSuffix(v string) predicate.PaymentOrder {
+	return predicate.PaymentOrder(sql.FieldHasSuffix(FieldProviderRefundID, v))
+}
+
+// ProviderRefundIDIsNil applies the IsNil predicate on the "provider_refund_id" field.
+func ProviderRefundIDIsNil() predicate.PaymentOrder {
+	return predicate.PaymentOrder(sql.FieldIsNull(FieldProviderRefundID))
+}
+
+// ProviderRefundIDNotNil applies the NotNil predicate on the "provider_refund_id" field.
+func ProviderRefundIDNotNil() predicate.PaymentOrder {
+	return predicate.PaymentOrder(sql.FieldNotNull(FieldProviderRefundID))
+}
+
+// ProviderRefundIDEqualFold applies the EqualFold predicate on the "provider_refund_id" field.
+func ProviderRefundIDEqualFold(v string) predicate.PaymentOrder {
+	return predicate.PaymentOrder(sql.FieldEqualFold(FieldProviderRefundID, v))
+}
+
+// ProviderRefundIDContainsFold applies the ContainsFold predicate on the "provider_refund_id" field.
+func ProviderRefundIDContainsFold(v string) predicate.PaymentOrder {
+	return predicate.PaymentOrder(sql.FieldContainsFold(FieldProviderRefundID, v))
 }
 
 // RefundRequestedAtEQ applies the EQ predicate on the "refund_requested_at" field.

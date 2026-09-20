@@ -273,6 +273,37 @@ func (h *PaymentHandler) QueryAndFinalizeRefund(c *gin.Context) {
 	response.Success(c, result)
 }
 
+// AdminForceFinalizeRefundRequest is the request body for force-finalizing a
+// pending refund that the gateway can no longer be queried about.
+type AdminForceFinalizeRefundRequest struct {
+	Refunded bool   `json:"refunded"`
+	Reason   string `json:"reason"`
+}
+
+// ForceFinalizeRefund finalizes a REFUND_PENDING order without querying the
+// gateway, for orders inquiry can never resolve (mismatched gateway amount, or a
+// refund identifier missing on a pre-migration order).
+// POST /api/v1/admin/payment/orders/:id/refund/force-finalize
+func (h *PaymentHandler) ForceFinalizeRefund(c *gin.Context) {
+	orderID, ok := parseIDParam(c, "id")
+	if !ok {
+		return
+	}
+
+	var req AdminForceFinalizeRefundRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+
+	result, err := h.paymentService.ForceFinalizeRefund(c.Request.Context(), orderID, req.Refunded, req.Reason)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
 // --- Subscription Plans ---
 
 // ListPlans returns all subscription plans.

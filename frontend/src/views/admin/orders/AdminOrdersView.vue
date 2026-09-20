@@ -49,6 +49,10 @@
               <Icon name="refresh" size="sm" :class="refundQueryingIds.has(row.id) ? 'animate-spin' : ''" />
               {{ t('payment.admin.queryRefundStatus') }}
             </button>
+            <button v-if="row.status === 'REFUND_PENDING'" :disabled="refundForceFinalizing" @click="openForceFinalizeDialog(row)" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-100 disabled:opacity-60 dark:text-gray-300 dark:hover:bg-dark-600">
+              <Icon name="ban" size="sm" />
+              {{ t('payment.admin.forceFinalizeRefund') }}
+            </button>
             <button v-else-if="row.status === 'COMPLETED' || row.status === 'PARTIALLY_REFUNDED'" @click="openRefundDialog(row)" class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20">
               <Icon name="dollar" size="sm" />
               {{ t('payment.admin.refund') }}
@@ -112,6 +116,30 @@
     </BaseDialog>
 
     <AdminRefundDialog :show="showRefundDialog" :order="selectedOrder" :submitting="refundSubmitting" :require-force="refundRequireForce" :warning="refundWarning" @confirm="handleRefund" @cancel="closeRefundDialog" />
+
+    <ConfirmDialog
+      :show="showForceFinalizeDialog"
+      :title="t('payment.admin.forceFinalizeRefundTitle')"
+      :message="t('payment.admin.forceFinalizeRefundMessage')"
+      :confirm-text="t('common.confirm')"
+      danger
+      @confirm="handleForceFinalizeRefund(forceFinalizeRefunded)"
+      @cancel="closeForceFinalizeDialog"
+    >
+      <div class="space-y-3">
+        <p class="text-xs text-gray-500 dark:text-gray-400">
+          {{ forceFinalizeOrder ? `${t('payment.admin.orderNo')}: ${forceFinalizeOrder.out_trade_no}` : '' }}
+        </p>
+        <label class="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-300">
+          <input v-model="forceFinalizeRefunded" type="radio" :value="true" class="mt-1" />
+          <span>{{ t('payment.admin.forceFinalizeRefunded') }}</span>
+        </label>
+        <label class="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-300">
+          <input v-model="forceFinalizeRefunded" type="radio" :value="false" class="mt-1" />
+          <span>{{ t('payment.admin.forceFinalizeNotRefunded') }}</span>
+        </label>
+      </div>
+    </ConfirmDialog>
   </AppLayout>
 </template>
 
@@ -126,6 +154,7 @@ import type { PaymentOrder } from '@/types/payment'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
 import AdminRefundDialog from '@/components/admin/payment/AdminRefundDialog.vue'
@@ -156,6 +185,10 @@ const refundSubmitting = ref(false)
 const refundRequireForce = ref(false)
 const refundWarning = ref('')
 const refundQueryingIds = ref(new Set<number>())
+const showForceFinalizeDialog = ref(false)
+const refundForceFinalizing = ref(false)
+const forceFinalizeOrder = ref<PaymentOrder | null>(null)
+const forceFinalizeRefunded = ref(true)
 const orderAuditLogs = ref<AuditLog[]>([])
 const creditedAmountSymbol = currencySymbol('USD')
 
@@ -207,6 +240,7 @@ const paymentTypeFilterOptions = computed(() => [
   { value: 'wxpay', label: t('payment.methods.wxpay') },
   { value: 'stripe', label: t('payment.methods.stripe') },
   { value: 'airwallex', label: t('payment.methods.airwallex') },
+  { value: 'antom', label: t('payment.methods.antom') },
 ])
 
 const orderTypeFilterOptions = computed(() => [
@@ -302,6 +336,40 @@ async function handleQueryRefund(order: PaymentOrder) {
     const next = new Set(refundQueryingIds.value)
     next.delete(order.id)
     refundQueryingIds.value = next
+  }
+}
+
+function openForceFinalizeDialog(order: PaymentOrder) {
+  forceFinalizeOrder.value = order
+  forceFinalizeRefunded.value = true
+  showForceFinalizeDialog.value = true
+}
+
+function closeForceFinalizeDialog() {
+  showForceFinalizeDialog.value = false
+  forceFinalizeOrder.value = null
+}
+
+async function handleForceFinalizeRefund(refunded: boolean) {
+  const order = forceFinalizeOrder.value
+  if (!order || refundForceFinalizing.value) return
+  refundForceFinalizing.value = true
+  try {
+    const res = await adminPaymentAPI.forceFinalizeRefund(order.id, {
+      refunded,
+      reason: 'admin force finalize',
+    })
+    if (res.data.success) {
+      appStore.showSuccess(t('payment.admin.refundSuccess'))
+    } else {
+      appStore.showError(res.data.warning || t('common.error'))
+    }
+    closeForceFinalizeDialog()
+    loadOrders()
+  } catch (err: unknown) {
+    appStore.showError(extractI18nErrorMessage(err, t, 'payment.errors', t('common.error')))
+  } finally {
+    refundForceFinalizing.value = false
   }
 }
 
