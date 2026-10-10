@@ -77,9 +77,16 @@ func TestAntomHostedCheckoutSignsExactRequestAndRejectsUntrustedResponses(t *tes
 		require.NoError(t, json.Unmarshal(raw, &payload))
 		require.Equal(t, "CHECKOUT_PAYMENT", payload["productScene"])
 		require.Equal(t, map[string]any{"currency": "USD", "value": "1234"}, payload["paymentAmount"])
-		require.Equal(t, "WAP", payload["env"].(map[string]any)["terminalType"])
-		require.Equal(t, "ANDROID", payload["env"].(map[string]any)["osType"])
-		require.Equal(t, "42", payload["order"].(map[string]any)["buyer"].(map[string]any)["referenceBuyerId"])
+		env, ok := payload["env"].(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, "WAP", env["terminalType"])
+		require.Equal(t, "ANDROID", env["osType"])
+
+		order, ok := payload["order"].(map[string]any)
+		require.True(t, ok)
+		buyer, ok := order["buyer"].(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, "42", buyer["referenceBuyerId"])
 		signed := strings.Split(r.Header.Get("signature"), "signature=")
 		require.Len(t, signed, 2)
 		encoded, err := url.QueryUnescape(signed[1])
@@ -247,7 +254,9 @@ func TestAntomRefundUnknownRetainsIdempotencyAndInquiryUsesRefundStatus(t *testi
 			return antomTestResponse(t, key, r.URL.Path, `{"result":{"resultCode":"SUCCESS","resultStatus":"S"},"paymentRequestId":"sub2_123","paymentId":"pay_123","paymentAmount":{"currency":"USD","value":"1234"}}`), nil
 		case strings.HasSuffix(r.URL.Path, "/refund"):
 			require.Equal(t, "pay_123", request["paymentId"])
-			ids = append(ids, request["refundRequestId"].(string))
+			refundRequestID, ok := request["refundRequestId"].(string)
+			require.True(t, ok)
+			ids = append(ids, refundRequestID)
 			return antomTestResponse(t, key, r.URL.Path, `{"result":{"resultCode":"REFUND_IN_PROCESS","resultStatus":"U"}}`), nil
 		default:
 			require.Equal(t, ids[0], request["refundRequestId"])
@@ -286,7 +295,8 @@ func TestAntomRefundCanRetryAfterConfirmedFailure(t *testing.T) {
 		}
 		var request map[string]any
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
-		id := request["refundRequestId"].(string)
+		id, ok := request["refundRequestId"].(string)
+		require.True(t, ok)
 		if !funded || failedIDs[id] {
 			failedIDs[id] = true
 			return antomTestResponse(t, key, r.URL.Path, `{"result":{"resultCode":"MERCHANT_BALANCE_NOT_ENOUGH","resultStatus":"F"}}`), nil

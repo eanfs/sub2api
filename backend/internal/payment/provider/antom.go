@@ -501,7 +501,7 @@ func (a *Antom) call(ctx context.Context, operation string, payload any, out *an
 	if err != nil {
 		return fmt.Errorf("antom %s request failed: %w", operation, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	const maxResponseSize = 1 << 20
 	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize+1))
 	if err != nil {
