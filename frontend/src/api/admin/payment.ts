@@ -125,6 +125,11 @@ export const adminPaymentAPI = {
     return apiClient.post<RefundResult>(`/admin/payment/orders/${id}/refund/query`)
   },
 
+  /** Finalize a pending refund without querying the gateway (unresolvable refunds) */
+  forceFinalizeRefund(id: number, data: { refunded: boolean; reason?: string }) {
+    return apiClient.post<RefundResult>(`/admin/payment/orders/${id}/refund/force-finalize`, data)
+  },
+
   // ==================== Channels ====================
 
   /** Get all payment channels */

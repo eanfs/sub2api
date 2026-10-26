@@ -305,6 +305,11 @@ func (s *PaymentService) invalidateRefundBalanceCache(ctx context.Context, userI
 }
 
 func (s *PaymentService) ExecuteRefund(ctx context.Context, p *RefundPlan) (*RefundResult, error) {
+	// REFUND_PENDING 只能通过 QueryAndFinalizeRefund 收敛：重新发起会重复扣减并向网关重复退款。
+	if payment.GetBasePaymentType(p.Order.PaymentType) == payment.TypeAntom && p.Order.Status == OrderStatusRefundPending {
+		// An unknown refund must be resolved before another attempt can move money.
+		return s.QueryAndFinalizeRefund(ctx, p.OrderID)
+	}
 	c, err := s.entClient.PaymentOrder.Update().Where(paymentorder.IDEQ(p.OrderID), paymentorder.StatusIn(OrderStatusCompleted, OrderStatusRefundRequested, OrderStatusRefundFailed)).SetStatus(OrderStatusRefunding).Save(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("lock: %w", err)
@@ -375,12 +380,28 @@ func (s *PaymentService) gwRefund(ctx context.Context, p *RefundPlan) (*payment.
 		})
 		return nil, err
 	}
+	var attemptID string
+	if prov.ProviderKey() == payment.TypeAntom {
+		// A final failure consumes Antom's idempotency key. The durable failure audit
+		// starts a new generation; unknown outcomes never advance this generation.
+		failure, err := s.entClient.PaymentAuditLog.Query().Where(
+			paymentauditlog.OrderIDEQ(strconv.FormatInt(p.OrderID, 10)),
+			paymentauditlog.ActionIn("REFUND_GATEWAY_FAILED", "REFUND_FAILED"),
+		).Order(dbent.Desc(paymentauditlog.FieldID)).First(ctx)
+		if err != nil && !dbent.IsNotFound(err) {
+			return nil, fmt.Errorf("load refund attempt: %w", err)
+		}
+		if failure != nil {
+			attemptID = strconv.FormatInt(failure.ID, 10)
+		}
+	}
 	finishProviderCall := servertiming.ObserveDependency(ctx, "payment")
 	resp, err := prov.Refund(ctx, payment.RefundRequest{
-		TradeNo: p.Order.PaymentTradeNo,
-		OrderID: p.Order.OutTradeNo,
-		Amount:  formatGatewayRefundAmount(p.GatewayAmount, p.Order),
-		Reason:  p.Reason,
+		TradeNo:   p.Order.PaymentTradeNo,
+		OrderID:   p.Order.OutTradeNo,
+		Amount:    formatGatewayRefundAmount(p.GatewayAmount, p.Order),
+		Reason:    p.Reason,
+		AttemptID: attemptID,
 	})
 	finishProviderCall()
 	if err != nil {
@@ -446,23 +467,29 @@ func (s *PaymentService) QueryAndFinalizeRefund(ctx context.Context, oid int64) 
 		return nil, infraerrors.BadRequest("REFUND_QUERY_UNSUPPORTED", "this payment provider does not support refund status query; please verify manually")
 	}
 
+	plan := s.refundFinalizePlan(o)
 	pendingDetail, err := s.latestRefundPendingDetail(ctx, oid)
 	if err != nil {
 		return nil, err
+	}
+	// The order column is authoritative; orders created before it existed fall
+	// back to the REFUND_PENDING audit row.
+	refundID := strings.TrimSpace(psStringValue(o.ProviderRefundID))
+	if refundID == "" {
+		refundID = pendingDetail.RefundID
 	}
 	finishProviderCall := servertiming.ObserveDependency(ctx, "payment")
 	resp, err := queryProvider.QueryRefund(ctx, payment.RefundQueryRequest{
 		TradeNo:     o.PaymentTradeNo,
 		OrderID:     o.OutTradeNo,
-		RefundID:    pendingDetail.RefundID,
-		Amount:      formatGatewayRefundAmount(o.RefundAmount, o),
+		RefundID:    refundID,
+		Amount:      formatGatewayRefundAmount(plan.GatewayAmount, o),
 		RequestedAt: pendingDetail.requestedAt,
 	})
 	finishProviderCall()
 	if err != nil {
 		return nil, fmt.Errorf("query refund: %w", err)
 	}
-	plan := s.refundFinalizePlan(o)
 	switch {
 	case pendingDetail.DeductionHeld:
 		pendingDetail.applyTo(plan)
@@ -486,6 +513,69 @@ func (s *PaymentService) QueryAndFinalizeRefund(ctx context.Context, oid int64) 
 	default:
 		return s.finalizeRefundFailed(ctx, plan, fmt.Errorf("payment refund returned unknown status: %s", strings.TrimSpace(resp.Status)))
 	}
+}
+
+// ForceFinalizeRefund moves a REFUND_PENDING order to a terminal state without
+// consulting the gateway. It exists for orders that inquiry can never resolve —
+// a mismatched gateway refund amount, or a missing refund identifier on an order
+// created before provider_refund_id was persisted. Such an order would otherwise
+// be stuck forever, because Antom orders in REFUND_PENDING are never resubmitted.
+//
+// The operator states what the gateway actually did:
+//   - refunded: the money left the gateway; deduct the user and mark REFUNDED.
+//   - failed: the refund never happened; mark REFUND_FAILED so it can be retried.
+//
+// Reached only through the admin API; every call is audited.
+func (s *PaymentService) ForceFinalizeRefund(ctx context.Context, oid int64, refunded bool, reason string) (*RefundResult, error) {
+	o, err := s.entClient.PaymentOrder.Get(ctx, oid)
+	if err != nil {
+		return nil, infraerrors.NotFound("NOT_FOUND", "order not found")
+	}
+	if o.Status != OrderStatusRefundPending {
+		return nil, infraerrors.BadRequest("INVALID_STATUS", "only refund pending orders can be force finalized")
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "admin force finalize"
+	}
+	detail := map[string]any{
+		"refunded":         refunded,
+		"reason":           reason,
+		"providerRefundID": strings.TrimSpace(psStringValue(o.ProviderRefundID)),
+	}
+
+	plan := s.refundFinalizePlan(o)
+	pendingDetail, err := s.latestRefundPendingDetail(ctx, oid)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case pendingDetail.DeductionHeld:
+		// 终态沿用进入 pending 时保留的扣减，避免重复扣减。
+		pendingDetail.applyTo(plan)
+	case !pendingDetail.DeductionRollbackOK:
+		// 旧订单进入 pending 时已归还扣减，终态不再扣减。
+		plan.BalanceToDeduct = 0
+		plan.SubDaysToDeduct = 0
+	}
+	plan.Reason = reason
+
+	if !refunded {
+		s.writeAuditLog(ctx, oid, "REFUND_FORCE_FINALIZED_FAILED", "admin", detail)
+		return s.finalizeRefundFailed(ctx, plan, fmt.Errorf("force finalized by admin: %s", reason))
+	}
+
+	if !pendingDetail.DeductionHeld && pendingDetail.DeductionRollbackOK && o.OrderType == payment.OrderTypeSubscription {
+		if early := s.prepDeduct(ctx, o, plan, true); early != nil {
+			return early, nil
+		}
+	}
+	result, err := s.finalizePendingRefundSuccess(ctx, plan)
+	if err != nil {
+		return nil, err
+	}
+	s.writeAuditLog(ctx, oid, "REFUND_FORCE_FINALIZED_REFUNDED", "admin", detail)
+	return result, nil
 }
 
 func (s *PaymentService) finalizePendingRefundSuccess(ctx context.Context, p *RefundPlan) (_ *RefundResult, err error) {
@@ -805,8 +895,9 @@ func (s *PaymentService) markRefundOkTx(ctx context.Context, client *dbent.Clien
 // 消费这部分余额，终态成功时只能扣到剩余余额。网关确认失败后由 finalizeRefundFailed 归还。
 // 订单状态与审计记录同事务写入，确保终态收敛时能读到保留的扣减。
 func (s *PaymentService) markRefundPending(ctx context.Context, p *RefundPlan, resp *payment.RefundResponse) (_ *RefundResult, err error) {
+	refundID := refundResponseID(resp)
 	detail, err := json.Marshal(refundPendingAuditDetail{
-		RefundID:        refundResponseID(resp),
+		RefundID:        refundID,
 		RefundAmount:    p.RefundAmount,
 		Reason:          p.Reason,
 		Force:           p.Force,
@@ -830,16 +921,21 @@ func (s *PaymentService) markRefundPending(ctx context.Context, p *RefundPlan, r
 			slog.Error("[CRITICAL] gateway refund pending but order not marked", "orderID", p.OrderID, "error", err)
 		}
 	}()
-	_, err = tx.PaymentOrder.UpdateOneID(p.OrderID).
+	update := tx.PaymentOrder.UpdateOneID(p.OrderID).
 		SetStatus(OrderStatusRefundPending).
 		SetRefundAmount(p.RefundAmount).
 		SetRefundReason(p.Reason).
 		ClearRefundAt().
 		SetForceRefund(p.Force).
 		ClearFailedAt().
-		ClearFailedReason().
-		Save(ctx)
-	if err != nil {
+		ClearFailedReason()
+	// Persist the upstream identifier on the order itself. The audit log below is
+	// best-effort, so an order whose identifier only lived there could become
+	// un-inquirable and therefore permanently stuck in REFUND_PENDING.
+	if refundID != "" {
+		update = update.SetProviderRefundID(refundID)
+	}
+	if _, err = update.Save(ctx); err != nil {
 		return nil, fmt.Errorf("mark refund pending: %w", err)
 	}
 	if _, err = tx.PaymentAuditLog.Create().
