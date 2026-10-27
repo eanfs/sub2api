@@ -27,3 +27,37 @@ describe('pricing interval token bounds', () => {
     expect(wrapper.emitted('update')?.[1]?.[0]).toMatchObject({ max_tokens: max })
   })
 })
+
+describe('media tier labels', () => {
+  it('labels the video tier price per second and hides token bounds', () => {
+    const wrapper = mount(IntervalRow, {
+      props: { interval: { ...interval, tier_label: '480p', per_request_price: 0.0576 }, mode: 'video' },
+    })
+    const text = wrapper.text()
+    expect(text).toContain('admin.channels.form.perSecondPrice')
+    expect(text).not.toContain('admin.channels.form.perRequestPrice')
+    expect(text).toContain('admin.channels.form.resolution')
+    // 视频层级的匹配依据是分辨率标签，token 上下界无意义，不应渲染
+    expect(text).not.toContain('admin.channels.form.minTokens')
+    expect(text).not.toContain('admin.channels.form.maxTokens')
+    expect(wrapper.findAll('input[type="number"]')).toHaveLength(1)
+    expect(wrapper.find('input[type="text"]').attributes('placeholder')).toBe('480p / 720p / 1080p')
+  })
+
+  it('keeps the per-request label and token bounds for image mode', () => {
+    const wrapper = mount(IntervalRow, {
+      props: { interval: { ...interval, tier_label: '1K', per_request_price: 0.07 }, mode: 'image' },
+    })
+    const text = wrapper.text()
+    expect(text).toContain('admin.channels.form.perRequestPrice')
+    expect(text).not.toContain('admin.channels.form.perSecondPrice')
+    expect(text).toContain('admin.channels.form.minTokens')
+    expect(wrapper.findAll('input[type="number"]')).toHaveLength(3)
+  })
+
+  it('keeps the tier label for per-request mode', () => {
+    const wrapper = mount(IntervalRow, { props: { interval, mode: 'per_request' } })
+    expect(wrapper.text()).toContain('admin.channels.form.tierLabel')
+    expect(wrapper.text()).not.toContain('admin.channels.form.resolution')
+  })
+})
